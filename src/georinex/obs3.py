@@ -69,7 +69,7 @@ def rinexobs3(
         meas = None
     # %% allocate
     # times = obstime3(fn)
-    data = xarray.Dataset({}, coords={"time": [], "sv": []})
+    records = []
     if tlim is not None and not isinstance(tlim[0], datetime):
         raise TypeError("time bounds are specified as datetime.datetime")
 
@@ -121,11 +121,17 @@ def rinexobs3(
             if verbose:
                 print(time, end="\r")
 
-            # this time epoch is complete, assemble the data.
-            data = _epoch(data, raw, hdr, time, sv, useindicators, verbose)
+            # this time epoch is complete, assemble the data
+            # NOTE: this appends to records to accumulate results
+            _epoch(records, raw, hdr, time, sv, useindicators, verbose)
 
-    # %% patch SV names in case of "G 7" => "G07"
+    # this is what we want to achieve I think
+    # but implementing with a single call to merge() leads to __extremely__ large memory usage
+    data = xarray.merge(records)
+
+    # # %% patch SV names in case of "G 7" => "G07"
     data = data.assign_coords(sv=[s.replace(" ", "0") for s in data.sv.values.tolist()])
+
     # %% other attributes
     data.attrs["version"] = hdr["version"]
 
@@ -207,7 +213,7 @@ def obstime3(fn: T.TextIO | Path, verbose: bool = False):
 
 
 def _epoch(
-    data: xarray.Dataset,
+    data: T.List[xarray.Dataset],
     raw: str,
     hdr: dict[T.Hashable, T.Any],
     time: datetime,
@@ -246,14 +252,10 @@ def _epoch(
             print(time, "\r", end="")
 
         epoch_data = xarray.Dataset(dsf, coords={"time": [time], "sv": gsv})
-        if len(data) == 0:
-            data = epoch_data
-        elif len(hdr["fields"]) == 1:  # one satellite system selected, faster to process
-            data = xarray.concat((data, epoch_data), dim="time")
-        else:  # general case, slower for different satellite systems all together
-            data = xarray.merge((data, epoch_data))
+        data.append(epoch_data)
 
-    return data
+    # NOTE: no return value as we accumulated results in the data argument
+    # return data
 
 
 def _indicators(d: dict, k: str, arr: np.ndarray) -> dict[str, tuple]:
